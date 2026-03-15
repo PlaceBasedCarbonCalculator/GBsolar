@@ -1,0 +1,5 @@
+Sys.setenv(GRASS_INSTALLATION = "C:/Program Files/GRASS GIS 8.4")
+library(rgrass)
+GRASS_INSTALLATION <- Sys.getenv("GRASS_INSTALLATION")
+loc <- initGRASS(GRASS_INSTALLATION, home=tempdir())
+execGRASS("g.gisenv")

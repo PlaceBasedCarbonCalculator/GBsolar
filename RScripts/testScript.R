@@ -6,6 +6,10 @@
 library(terra); library(sf); library(rgrass); library(RSAGA)
 library(reticulate); library(data.table)
 
+# Download GRASS from https://grass.osgeo.org/download/windows/
+
+
+
 # -------------------------
 # User inputs / file paths
 # -------------------------
@@ -90,11 +94,28 @@ writeRaster(azimuth_r, filename = file.path(out_dir, "azimuth_deg.tif"), overwri
 # 4. Initialize GRASS and import DSM
 # -------------------------
 # Adjust gisBase to your GRASS installation path
-gisBase <- "C:/OSGeo4W/lib/grass78"   # <-- change to your GRASS path
-initGRASS(gisBase = gisBase, home = tempdir(), gisDbase = file.path(tempdir(),"grassdb"),
-          override = TRUE)
+gisBase <- "C:/Program Files/GRASS GIS 8.4"   # <-- change to your GRASS path
+
+
+loc = initGRASS(gisBase = gisBase, home = tempdir(), 
+                gisDbase = file.path(tempdir(),"grassdb"),
+                mapset = "PERMANENT",
+                override = TRUE)
+
+# Sys.setenv(GISBASE = gisBase)
+# Sys.setenv(OSGEO4W_ROOT = "C:/Program Files/GRASS GIS 8.4")
+# Sys.setenv(GRASS_PYTHON = file.path(gisBase, "scripts", "python.exe"))
+# 
+# # Extend PATH
+# Sys.setenv(PATH = paste(
+#   file.path(gisBase, "bin"),
+#   file.path(gisBase, "scripts"),
+#   Sys.getenv("PATH"),
+#   sep = .Platform$path.sep
+# ))
+
 # Create location with EPSG:27700
-execGRASS("g.proj", flags = "c", proj4 = paste0("+init=epsg:27700"))
+execGRASS("g.proj", flags = "c", epsg = 27700)
 
 # Export DSM to a temporary GeoTIFF and import into GRASS
 tmp_dsm <- file.path(tempdir(), "dsm_for_grass.tif")
@@ -115,7 +136,7 @@ execGRASS("r.in.gdal", flags = c("o","overwrite"), input = tmp_aspect, output = 
 # -------------------------
 # r.horizon computes horizon angle for each azimuth step; r.sun can use horizon
 # Example: compute horizon with step=1 degree (adjust for speed/accuracy)
-execGRASS("r.horizon", flags = c("overwrite"), input = "dsm", output = "horizon", step = 1.0)
+execGRASS("r.horizon", flags = c("overwrite"), elevation = "dsm", output = "horizon", step = 1.0)
 
 # Optionally compute Sky View Factor (SVF) using SAGA via RSAGA (faster alternative)
 saga_env <- rsaga.env()
