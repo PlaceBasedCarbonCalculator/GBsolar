@@ -3,14 +3,14 @@
 # Requires: terra, sf, rgrass7, RSAGA, reticulate, data.table
 # System: GRASS GIS (r.sun, r.horizon), SAGA (optional SVF), Python pvlib
 
-library(terra); library(sf); library(rgrass7); library(RSAGA)
+library(terra); library(sf); library(rgrass); library(RSAGA)
 library(reticulate); library(data.table)
 
 # -------------------------
 # User inputs / file paths
 # -------------------------
-dsm_tif      <- "tile_10km_dsm_27700.tif"     # 2 m DSM, EPSG:27700
-buildings_shp <- "tile_buildings_27700.shp"  # building polygons (optional but recommended)
+dsm_tif      <- "sampleData/DSM/SE23.tiff"     # 2 m DSM, EPSG:27700
+buildings_shp <- "sampleData/Building_heights/SE23.Rds"  # building polygons (optional but recommended)
 out_dir      <- "outputs_tile"
 dir.create(out_dir, showWarnings = FALSE)
 
@@ -37,12 +37,11 @@ system_losses_fraction <- 0.14  # 14% total system losses (soiling, wiring, inve
 # 1. Load DSM and buildings
 # -------------------------
 dsm <- rast(dsm_tif)
-crs(dsm) <- "EPSG:27700"
+#crs(dsm) <- "EPSG:27700"
 
 buildings <- NULL
 if (file.exists(buildings_shp)) {
-  buildings <- st_read(buildings_shp, quiet = TRUE)
-  st_crs(buildings) <- 27700
+  buildings <- readRDS(buildings_shp)
 }
 
 # -------------------------
@@ -91,7 +90,7 @@ writeRaster(azimuth_r, filename = file.path(out_dir, "azimuth_deg.tif"), overwri
 # 4. Initialize GRASS and import DSM
 # -------------------------
 # Adjust gisBase to your GRASS installation path
-gisBase <- "/usr/lib/grass78"   # <-- change to your GRASS path
+gisBase <- "C:/OSGeo4W/lib/grass78"   # <-- change to your GRASS path
 initGRASS(gisBase = gisBase, home = tempdir(), gisDbase = file.path(tempdir(),"grassdb"),
           override = TRUE)
 # Create location with EPSG:27700
