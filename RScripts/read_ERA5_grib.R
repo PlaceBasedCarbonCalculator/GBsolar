@@ -1,84 +1,99 @@
-# RScripts/read_ERA5_grib.R
-# Purpose: Example script to read an ERA5 hourly GRIB file (2020 UK) on Windows
-# Path used in the user's request:
-# C:/Users/malco/OneDrive - University of Leeds/Data/ERA5/ERA5_hourly_2020_UK.grib
-
-# This script will:
-#  - ensure needed packages are installed
-#  - attempt to read the GRIB with `stars` (recommended, supports proxy reads)
-#  - fall back to `raster::brick` if needed
-#  - print metadata and time values (if available)
-#  - write one example layer to GeoTIFF
-
-# Usage: edit `era5_file` below if needed, then run this script in R/RStudio.
-library(stars)
-library(raster)
 library(terra)
-library(lubridate)
+library(sf)
+library(dplyr)
+library(tidyr)
+library(data.table)
 
 # Set the file path (use forward slashes or double backslashes on Windows)
-path <- "C:/Users/malco/OneDrive - University of Leeds/Data/ERA5/ERA5_hourly_2020_UK.grib"
+path <- "D:/OneDrive - University of Leeds/Data/ERA5/ERA5_hourly_2020_UK.grib"
+bounds <- readRDS("../build/_targets/objects/bounds_la")
+bounds <- bounds[substr(bounds$LAD25CD,1,1) != "N",]
+bounds <- st_simplify(bounds, TRUE, 1000)
+bounds <- st_buffer(bounds, 1000)
+bounds <- st_union(bounds)
 
-st <- try(stars::read_stars(path, proxy = TRUE), silent = TRUE)
+# Make Grid
+os_grid_10 = read_sf("../../OrdnanceSurvey/OS-British-National-Grids/os_bng_grids/os_bng_grids.gpkg", layer = "10km_grid")
+os_grid_10 = os_grid_10[bounds,] #9100 squares -> 2903
+os_cents = st_centroid(os_grid_10)
 
 
+r <- rast(path)  # GRIB; lazy connection
+os_cents_rascrs <- project(vect(os_cents), crs(r))  # project points to raster CRS
 
-# Try reading with stars (recommended: can use proxy = TRUE so it won't load everything)
-read_with_stars <- function(path) {
-  message("Trying to read with 'stars' (proxy = TRUE)...")
-  
-  if (inherits(st, "try-error")) {
-    message("stars::read_stars failed: ", st)
-    return(NULL)
-  }
 
-  # Print summary / metadata
-  print(st)
-  message("Dimensions (stars::st_dimensions):")
-  print(stars::st_dimensions(st))
+bands <- sf::gdal_utils(source = path,
+                        options = c("-json"), 
+                        quiet = T) %>%
+  jsonlite::fromJSON()
 
-  # Try to read time values if available
-  
+bands_df = bands$bands
+#bands_df$timestamp = unlist((bands_df$metadata[[1]]$GRIB_REF_TIME))
+#bands_df$timestamp = as.POSIXct(as.integer(bands_df$timestamp), origin="1970-01-01")
 
-  return(st)
+bands_df$timestamp = unlist((bands_df$metadata[[1]]$GRIB_VALID_TIME))
+bands_df$timestamp = as.POSIXct(as.integer(bands_df$timestamp), origin="1970-01-01")
+
+bands_df$description = bands$bands$description
+
+bands_df$comment = unlist((bands_df$metadata[[1]]$GRIB_COMMENT))
+bands_df$element = unlist((bands_df$metadata[[1]]$GRIB_ELEMENT))
+bands_df$unit = unlist((bands_df$metadata[[1]]$GRIB_UNIT))
+
+bands_df = bands_df[,c("band","timestamp","comment","element","unit")]
+
+bands_df$element = gsub(" of table 228 of center ECMWF","",bands_df$element)
+
+bands_df$dups = (duplicated(bands_df[,c("timestamp2","element")]))
+
+#bands_df = bands_df[bands_df$element %in% c("SSRC","SSRD","2T","SP","TCC","10V","10U")]
+
+# Using the same 'bands_df' from your stars metadata (band -> timestamp/element)
+types <- unique(bands_df$element)
+bands_df <- bands_df |> mutate(month = format(timestamp, "%Y-%m"))
+
+extract_batch_terra <- function(idx) {
+  r_sub <- r[[idx]]                 # subset the layers
+  m <- terra::extract(r_sub, os_cents_rascrs)  # data.frame: ID + one column per layer
+  m$ID <- NULL
+  dt <- as.data.table(m)
+  setnames(dt, paste0("b", idx))
+  dt[, grid := os_cents$tile_name]
+  long <- melt(dt, id.vars = "grid", variable.name = "b", value.name = "value")
+  long[, band := as.integer(sub("^b", "", b))]
+  long[, b := NULL]
+  long <- merge(long,
+                bands_df[, c("band","timestamp","element")],
+                by = "band",
+                all.x = TRUE,
+                sort = FALSE)
+  long[, band := NULL]
+  tibble::as_tibble(long)
 }
 
+data_all <- purrr::map_dfr(types, function(tp) {
+  idx_tp <- which(bands_df$element == tp)
+  idx_by_month <- split(idx_tp, bands_df$month[idx_tp])
+  purrr::map_dfr(idx_by_month, extract_batch_terra)
+}, .progress = TRUE)
 
-# Try stars first
-st_obj <- read_with_stars(era5_file)
+# data_all$grid = as.factor(data_all$grid)
+# data_all$element = as.factor(data_all$element)
 
-message("stars read succeeded. If you want to operate on values in R, consider converting a subset to 'terra' or 'raster'.")
-# Example: read the first time slice to a GeoTIFF without loading all slices
-# Attempt to read only the first time index (if there's a time dimension)
-time_vals <- try(stars::st_get_dimension_values(st_obj, "time"), silent = TRUE)
-if (!inherits(time_vals, "try-error") && length(time_vals) > 0) {
-  message("Reading first time slice and writing example TIFF: ERA5_first_slice.tif")
-  # index selection: use stars indexing. We'll attempt to keep other dims, but only select first time
-  # Determine which dimension name is 'time'
-  dims <- names(stars::st_dimensions(st_obj))
-  tdim <- NULL
-  if ("time" %in% dims) tdim <- which(dims == "time")
 
-  out_file <- file.path(getwd(), "ERA5_first_slice.tif")
-  # try a generic approach: slice by index if time is present
-  if (!is.null(tdim)) {
-    # create an index list of full ranges then replace the time dimension with 1
-    idx <- lapply(stars::st_dimensions(st_obj), function(d) seq_len(d$to - d$from + 1))
-    idx[[tdim]] <- 1L
-    # apply indexing
-    slice <- try(st_obj[idx], silent = TRUE)
-    if (!inherits(slice, "try-error")) {
-      try(stars::write_stars(slice, out_file, options = c("COMPRESS=LZW")), silent = TRUE)
-      message("Wrote example slice to: ", out_file)
-    } else {
-      message("Failed to slice stars object (writing skipped).")
-    }
-  } else {
-    message("No explicit 'time' dimension; skipping example slice write.")
-  }
-} else {
-  message("No time values available; skipping slice write example.")
+data_wide <- data_all |>
+  pivot_wider(id_cols = c("grid","timestamp"),
+              values_from = "value",
+              names_from = "element")
+
+
+saveRDS(data_wide,"sampleData/ERA5/summary_data_all.Rds")
+
+data_wide_lst <- data_wide |>
+  group_by(grid) |>
+  group_split()
+
+for(i in 1:length(data_wide_lst)){
+  sub <- data_wide_lst[[i]]
+  saveRDS(sub, paste0("sampleData/ERA5/byGrid/",sub$grid[1],".Rds"))
 }
-
-
-message("Done. If you need further extraction (variables, subsets, reprojection), update this script or ask for a customized helper.")
