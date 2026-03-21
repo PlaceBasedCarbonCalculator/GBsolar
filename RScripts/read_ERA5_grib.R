@@ -28,8 +28,6 @@ bands <- sf::gdal_utils(source = path,
   jsonlite::fromJSON()
 
 bands_df = bands$bands
-#bands_df$timestamp = unlist((bands_df$metadata[[1]]$GRIB_REF_TIME))
-#bands_df$timestamp = as.POSIXct(as.integer(bands_df$timestamp), origin="1970-01-01")
 
 bands_df$timestamp = unlist((bands_df$metadata[[1]]$GRIB_VALID_TIME))
 bands_df$timestamp = as.POSIXct(as.integer(bands_df$timestamp), origin="1970-01-01")
@@ -44,9 +42,6 @@ bands_df = bands_df[,c("band","timestamp","comment","element","unit")]
 
 bands_df$element = gsub(" of table 228 of center ECMWF","",bands_df$element)
 
-bands_df$dups = (duplicated(bands_df[,c("timestamp2","element")]))
-
-#bands_df = bands_df[bands_df$element %in% c("SSRC","SSRD","2T","SP","TCC","10V","10U")]
 
 # Using the same 'bands_df' from your stars metadata (band -> timestamp/element)
 types <- unique(bands_df$element)
