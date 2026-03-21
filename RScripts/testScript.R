@@ -7,6 +7,7 @@ library(sf)
 library(rgrass)
 library(suntools)
 library(data.table)
+library(lubridate)
 
 # Download GRASS from https://grass.osgeo.org/download/windows/
 
@@ -65,21 +66,26 @@ if (file.exists(buildings_shp)) {
   buildings <- readRDS(buildings_shp)
 }
 
-# Adjust time for dalylight hours
+# Adjust time for daylight hours
 # Simulation period (typical year)
 extent <- ext(dsm)
 centre <- st_point(c((extent[1] + extent[2]) / 2, (extent[3] + extent[4]) / 2))
 centre <- st_as_sf(st_sfc(list(centre), crs = 27700))
 centre <- st_transform(centre, 4326)
 
-start_time <- as.POSIXct("2020-01-01 00:00", tz="UTC")
-end_time   <- as.POSIXct("2020-12-31 23:00", tz="UTC")
-days      <- seq(start_time, end_time, by = "1 day")   # hourly (8760)
+selected_days <- unlist(lapply(1:12, function(month) {
+  month_start <- ymd(paste0("2020-",month,"-01"))
+  month_end <-  ymd(paste0("2020-",month,"-",days_in_month(month_start)))
+  month_days <- seq(month_start, month_end, by = "1 day")
+  sample(month_days, 3)
+}))
+selected_days <- as.Date(selected_days)
+selected_days <- as.POSIXct(selected_days)
 
-dawn = crepuscule(centre, days, solarDep = 6, direction = "dawn", POSIXct.out = TRUE) 
-dusk = crepuscule(centre, days, solarDep = 6, direction = "dusk", POSIXct.out = TRUE) 
-dawn$time <- lubridate::ceiling_date(dawn$time, "hour")
-dusk$time <- lubridate::floor_date(dusk$time, "hour")
+dawn <- crepuscule(centre, selected_days, solarDep = 6, direction = "dawn", POSIXct.out = TRUE)
+dusk <- crepuscule(centre, selected_days, solarDep = 6, direction = "dusk", POSIXct.out = TRUE)
+dawn$time <- ceiling_date(dawn$time, "hour")
+dusk$time <- floor_date(dusk$time, "hour")
 
 times <- list()
 for(i in 1:nrow(dawn)){
@@ -231,9 +237,37 @@ for (i in seq_along(times)) {
   }
 
   # Clean up GRASS maps to save memory
-  execGRASS("g.remove", type = "raster", name = paste0(out_prefix, "_beam"), flags = "f")
-  execGRASS("g.remove", type = "raster", name = paste0(out_prefix, "_diff"), flags = "f")
-  execGRASS("g.remove", type = "raster", name = paste0(out_prefix, "_glob"), flags = "f")
-
 }
+
+# ------------------------- 
+# 8. Combine rasters into annual solar potential
+# -------------------------
+# List all corrected GHI rasters
+ghi_files <- list.files(out_dir, pattern = "ghi_.*_era5_adj\\.tif$", full.names = TRUE)
+
+# Initialize total raster
+total_r <- dsm * 0
+
+
+# Group files by month
+file_info <- data.frame(file = ghi_files, 
+                        date_str = sub("ghi_([0-9]{8})[0-9]{2}_era5_adj\\.tif", "\\1", basename(ghi_files)),
+                        stringsAsFactors = FALSE)
+file_info$month <- as.integer(substr(file_info$date_str, 5, 6))
+
+for (month in 1:12) {
+  month_files <- file_info$file[file_info$month == month]
+  if (length(month_files) > 0) {
+    month_rasters <- rast(month_files)
+    month_sum <- sum(month_rasters)
+    days_in_month <- days_in_month(as.Date(sprintf("2020-%02d-01", month)))
+    scale <- days_in_month / 3
+    total_r <- total_r + (month_sum * scale)
+  }
+}
+
+# Convert from Wh/m2 to kWh/m² and save
+annual_potential <- total_r / 1000
+writeRaster(annual_potential, filename = file.path(out_dir, "annual_solar_potential_kwh_m2.tif"), 
+            overwrite = TRUE, datatype = "FLT4S", gdal = "COMPRESS=LZW", NAflag = -9999)
 
