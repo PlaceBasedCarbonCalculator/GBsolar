@@ -4,9 +4,11 @@ insolation = function(grid = "SE23",
                       day_of_month = 15,
                       year = 2020,
                       dsm_dir = "", 
-                      ear5_dir = "sampleData/ERA5/byGrid/" ,
+                      era5_dir = "sampleData/ERA5/byGrid/" ,
                       out_dir = "C:/rastTemp/solar",
-                      gisBase = "C:/Program Files/GRASS GIS 8.4"
+                      gisBase = "C:/Program Files/GRASS GIS 8.4",
+                      nprocs = 35,
+                      skip = TRUE
                       ){
   
   # Check Paths
@@ -42,8 +44,8 @@ insolation = function(grid = "SE23",
   selected_days <- as.Date(selected_days)
   selected_days <- as.POSIXct(selected_days)
   
-  dawn <- crepuscule(centre, selected_days, solarDep = 6, direction = "dawn", POSIXct.out = TRUE)
-  dusk <- crepuscule(centre, selected_days, solarDep = 6, direction = "dusk", POSIXct.out = TRUE)
+  dawn <- suntools::crepuscule(centre, selected_days, solarDep = 6, direction = "dawn", POSIXct.out = TRUE)
+  dusk <- suntools::crepuscule(centre, selected_days, solarDep = 6, direction = "dusk", POSIXct.out = TRUE)
   dawn$time <- lubridate::ceiling_date(dawn$time, "hour")
   dusk$time <- lubridate::floor_date(dusk$time, "hour")
   
@@ -87,6 +89,9 @@ insolation = function(grid = "SE23",
   terra::writeRaster(aspect_r, tmp_aspect, overwrite = TRUE)
   rgrass::execGRASS("r.in.gdal", flags = c("o","overwrite"), input = tmp_aspect, output = "aspect")
   
+  # Pre-compute Horizon
+  #rgrass::execGRASS("r.horizon", elevation = "dsm", output = "horizon", step = 1)
+  
   # -------------------------
   # 7. Run r.sun hourly to compute beam/diffuse/global on horizontal surface
   # -------------------------
@@ -95,7 +100,7 @@ insolation = function(grid = "SE23",
   # For speed, run only daylight hours per day; here we run full 0-23 for simplicity.
   
   # Return to 2m resolution
-  rgrass::execGRASS("g.region", raster = "dsm", flags = "p") # back to fine region
+  #rgrass::execGRASS("g.region", raster = "dsm", flags = "p") # back to fine region
   
   # Create a vector of day-of-year and hour
   doy <- as.integer(format(times, "%j"))
@@ -104,10 +109,16 @@ insolation = function(grid = "SE23",
   # We'll store hourly global horizontal irradiance (GHI) raster outputs in a temp mapset
   # For large runs, parallelize by day or tile and write to disk incrementally.
   for (i in seq_along(times)) {
+    
     t <- times[i]
     day_i <- doy[i]
     hour_i <- hour_decimal[i]
-    #message(Sys.time()," ",t)
+    
+    if(skip & file.exists(file.path(out_dir, paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif")))){
+      message("Skipping ",paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif"))
+      next
+    }
+    
     out_prefix <- paste0("sun_", format(t, "%Y%m%d%H"))
     # r.sun parameters: day, time, horizon, beam_rad, diff_rad, glob_rad
     rgrass::execGRASS("r.sun",
@@ -115,13 +126,13 @@ insolation = function(grid = "SE23",
               parameters = list(elevation = "dsm",
                                 aspect = "aspect",
                                 slope = "slope",
-                                #horizon_basename = "horizon",
+                                #horizon_basename = "horizon", #Faster without using horizon
                                 #horizon_step = 1,
                                 day = day_i,
                                 time = hour_i,
-                                nprocs = 30, # Use multiple cores
-                                beam_rad = paste0(out_prefix, "_beam"),
-                                diff_rad = paste0(out_prefix, "_diff"),
+                                nprocs = nprocs, # Use multiple cores
+                                #beam_rad = paste0(out_prefix, "_beam"),
+                                #diff_rad = paste0(out_prefix, "_diff"),
                                 glob_rad = paste0(out_prefix, "_glob")
               ))
     
@@ -154,7 +165,7 @@ insolation = function(grid = "SE23",
   
   
   # Clean Up
-  unlink(tmp_dsm, tmp_slope, tmp_aspect)
+  unlink(c(tmp_dsm, tmp_slope, tmp_aspect))
   unlink(file.path(tempdir(), "grassdb"), recursive = TRUE)
 
   return(invisible(NULL))
