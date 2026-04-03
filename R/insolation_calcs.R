@@ -80,6 +80,9 @@ insolation = function(grid = "SE23",
   terra::writeRaster(dsm, tmp_dsm, overwrite = TRUE)
   rgrass::execGRASS("r.in.gdal", flags = c("o","overwrite"), input = tmp_dsm, output = "dsm")
   
+  # Set region to DSM
+  rgrass::execGRASS("g.region", raster = "dsm")
+  
   # Import slope/aspect if desired
   tmp_slope <- file.path(tempdir(), "slope_for_grass.tif")
   terra::writeRaster(slope_r, tmp_slope, overwrite = TRUE)
@@ -136,30 +139,33 @@ insolation = function(grid = "SE23",
                                 glob_rad = paste0(out_prefix, "_glob")
               ))
     
-    # Export glob to GeoTIFF for later transposition
-    out_tif <- file.path(out_dir, paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), ".tif"))
-    rgrass::execGRASS("r.out.gdal", flags = c("overwrite"), input = paste0(out_prefix, "_glob"),
-              output = out_tif, format = "GTiff", createopt = "COMPRESS=LZW",
-              type = "Float32",  nodata = -9999)
+    # Compute mean irradiance directly in GRASS to check if > 0 before exporting
+    univar_output <- rgrass::execGRASS("r.univar", map = paste0(out_prefix, "_glob"), intern = TRUE)
+    mean_line <- grep("^mean:", univar_output, value = TRUE)
+    mean_ghi <- as.numeric(sub("^mean:\\s*", "", mean_line))
     
-    
-    era5_row <- era5[era5$timestamp == t, ]
-    if (nrow(era5_row) == 1) {
+    if (!is.na(mean_ghi) && mean_ghi > 0) {
+      # Save to temp dir and read in terra
+      out_tif <- file.path(tempdir(), paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), ".tif"))
+      rgrass::execGRASS("r.out.gdal", flags = c("overwrite"), input = paste0(out_prefix, "_glob"),
+                        output = out_tif, format = "GTiff",
+                        type = "Float32",  nodata = -9999)
+      ghi_r <- terra::rast(out_tif)
+      era5_row <- era5[era5$timestamp == t, ]
+      if (nrow(era5_row) != 1) {
+        stop("Muliple or missing rows in ERA5 ", out_tif)
+      }
       era5_ghi <- era5_row$era5_ghi_wm2
       # optional: include cloud effect multiplier
       cloud_factor <- pmax(0.1, 1 - era5_row$TCC) # fallback
-      ghi_r <- terra::rast(out_tif)
-      mean_ghi <- terra::global(ghi_r, fun='mean', na.rm=TRUE)[1,1]
-      if (!is.na(mean_ghi) && mean_ghi > 0) {
-        # bias-corrected raster
-        scale <- era5_ghi / mean_ghi
-        ghi_corr <- ghi_r * scale * cloud_factor
-        out_tif_corr <- file.path(out_dir, paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif"))
-        terra::writeRaster(ghi_corr, filename=out_tif_corr, overwrite=TRUE, datatype="FLT4S", 
-                    gdal="COMPRESS=LZW", NAflag=-9999)
-      }
-    } else {
-      stop("Muliple or missing rows in ERA5")
+      # bias-corrected raster
+      scale <- era5_ghi / mean_ghi
+      ghi_corr <- ghi_r * scale * cloud_factor
+      out_tif_corr <- file.path(out_dir, paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif"))
+      terra::writeRaster(ghi_corr, filename=out_tif_corr, overwrite=TRUE, datatype="FLT4S", 
+                  gdal="COMPRESS=LZW", NAflag=-9999)
+      unlink(out_tif)
+      
     }
   }
   
