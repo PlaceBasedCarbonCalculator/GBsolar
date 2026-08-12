@@ -1,12 +1,14 @@
-insolation_daily <- function(grid = "SE23",
-                             day_of_month = 15,
-                             year = 2020,
-                             dsm_dir = "", 
-                             era5_dir = "sampleData/ERA5/byGrid/" ,
-                             out_dir = "C:/rastTemp/solar",
-                             gisBase = "C:/Program Files/GRASS GIS 8.4",
-                             nprocs = 35,
-                             skip = TRUE
+# Function to produce annual isolation for a single tile.
+
+insolation_daily = function(grid = "SE23",
+                      day_of_month = 15,
+                      year = 2020,
+                      dsm_dir = "F:/DTM_DSM/GB_10k/DSM", 
+                      era5_dir = "sampleData/ERA5/byGrid/" ,
+                      out_dir = "F:/DTM_DSM/GB_10k/solarDaily",
+                      gisBase = "C:/Program Files/GRASS GIS 8.4",
+                      nprocs = 35,
+                      skip = TRUE
 ){
   
   # Check Paths
@@ -14,148 +16,196 @@ insolation_daily <- function(grid = "SE23",
   stopifnot(file.exists(file.path(era5_dir,paste0(grid,".Rds"))))
   stopifnot(file.exists(file.path(dsm_dir,paste0(grid,".tiff"))))
   
-  day_of_month <- stringr::str_pad(day_of_month,2,pad="0")
+  day_of_month <- stringr::str_pad(day_of_month,2,pad = "0")
   
   # Load Weather Data
-  era5 <- readRDS(file.path(era5_dir,paste0(grid,".Rds")))
-  era5 <- era5[,c("timestamp","SSRD","TCC")]
+  era5 = readRDS(file.path(era5_dir,paste0(grid,".Rds")))
+  
+  # Process ERA5 Data
+  era5 = era5[,c("timestamp","SSRD","TCC")]
+  
   era5$era5_ghi_wm2 <- era5$SSRD / 3600
-  era5$era5_tcc <- era5$TCC
+  era5$era5_tcc <- era5$TCC  # 0..1
   
   # Load DSM
   dsm <- terra::rast(file.path(dsm_dir,paste0(grid,".tiff")))
   
-  # Location centre for daylight filter
+  # Process Times to run simulation
+  # Adjust time for daylight hours
+  # Simulation period (typical year)
   extent <- terra::ext(dsm)
-  centre <- sf::st_point(c((extent[1] + extent[2])/2,
-                           (extent[3] + extent[4])/2))
+  centre <- sf::st_point(c((extent[1] + extent[2]) / 2, (extent[3] + extent[4]) / 2))
   centre <- sf::st_as_sf(sf::st_sfc(list(centre), crs = 27700))
   centre <- sf::st_transform(centre, 4326)
   
-  # Selected days = 15th of each month
-  selected_days <- lubridate::ymd(
-    paste0(year,"-",1:12,"-",day_of_month)
-  ) |> as.POSIXct()
+  selected_days <- unlist(lapply(1:12, function(month) {
+    month_days <- lubridate::ymd(paste0(year,"-",month,"-",day_of_month))
+  }))
+  selected_days <- as.Date(selected_days)
+  selected_days <- as.POSIXct(selected_days)
   
-  dawn <- suntools::crepuscule(centre, selected_days,
-                               solarDep = 6, direction = "dawn", POSIXct.out = TRUE)
-  dusk <- suntools::crepuscule(centre, selected_days,
-                               solarDep = 6, direction = "dusk", POSIXct.out = TRUE)
+  dawn <- suntools::crepuscule(centre, selected_days, solarDep = 6, direction = "dawn", POSIXct.out = TRUE)
+  dusk <- suntools::crepuscule(centre, selected_days, solarDep = 6, direction = "dusk", POSIXct.out = TRUE)
   dawn$time <- lubridate::ceiling_date(dawn$time, "hour")
   dusk$time <- lubridate::floor_date(dusk$time, "hour")
   
-  # Create list of times per day
-  all_times <- unlist(lapply(1:nrow(dawn), function(i){
-    seq(dawn$time[i], dusk$time[i], by="hour")
-  }))
-  all_times <- as.POSIXct(all_times, tz = "UTC")
+  times <- list()
+  for(i in 1:nrow(dawn)){
+    times[[i]] <- seq(dawn$time[i], dusk$time[i], by = "1 hour")
+  }
+  times <- unlist(times)
+  times <- as.POSIXct(times, tz = "UTC")
   
-  # Compute slope/aspect
+  # -------------------------
+  # 2. Derive slope (tilt) and aspect (azimuth) rasters
+  # -------------------------
+  # Use terra::terrain to compute slope/aspect in degrees
   slope_r <- terra::terrain(dsm, v = "slope", unit = "degrees", neighbors = 8)
   aspect_r <- terra::terrain(dsm, v = "aspect", unit = "degrees", neighbors = 8)
   
-  # Init GRASS
-  rgrass::initGRASS(gisBase = gisBase,
-                    home = tempdir(),
-                    gisDbase = file.path(tempdir(),"grassdb"),
-                    mapset = "PERMANENT",
-                    override = TRUE)
+  # -------------------------
+  # 4. Initialize GRASS and import DSM
+  # -------------------------
+  loc = rgrass::initGRASS(gisBase = gisBase, 
+                          home = tempdir(), 
+                          gisDbase = file.path(tempdir(),"grassdb"),
+                          mapset = "PERMANENT",
+                          override = TRUE)
+  
+  # Create location with EPSG:27700
   rgrass::execGRASS("g.proj", flags = "c", epsg = 27700)
   
-  # Import DSM, slope, aspect
-  tmp_dsm <- file.path(tempdir(),"dsm_for_grass.tif")
+  # Export DSM to a temporary GeoTIFF and import into GRASS
+  tmp_dsm <- file.path(tempdir(), "dsm_for_grass.tif")
   terra::writeRaster(dsm, tmp_dsm, overwrite = TRUE)
-  rgrass::execGRASS("r.in.gdal", flags=c("o","overwrite"), input=tmp_dsm, output="dsm")
+  rgrass::execGRASS("r.in.gdal", flags = c("o","overwrite"), input = tmp_dsm, output = "dsm")
   
-  tmp_slope <- file.path(tempdir(),"slope_for_grass.tif")
-  terra::writeRaster(slope_r, tmp_slope, overwrite=TRUE)
-  rgrass::execGRASS("r.in.gdal", flags=c("o","overwrite"), input=tmp_slope, output="slope")
+  # Set region to DSM
+  rgrass::execGRASS("g.region", raster = "dsm")
   
-  tmp_aspect <- file.path(tempdir(),"aspect_for_grass.tif")
-  terra::writeRaster(aspect_r, tmp_aspect, overwrite=TRUE)
-  rgrass::execGRASS("r.in.gdal", flags=c("o","overwrite"), input=tmp_aspect, output="aspect")
+  # Import slope/aspect if desired
+  tmp_slope <- file.path(tempdir(), "slope_for_grass.tif")
+  terra::writeRaster(slope_r, tmp_slope, overwrite = TRUE)
+  rgrass::execGRASS("r.in.gdal", flags = c("o","overwrite"), input = tmp_slope, output = "slope")
   
-  rgrass::execGRASS("g.region", raster="dsm")
+  tmp_aspect <- file.path(tempdir(), "aspect_for_grass.tif")
+  terra::writeRaster(aspect_r, tmp_aspect, overwrite = TRUE)
+  rgrass::execGRASS("r.in.gdal", flags = c("o","overwrite"), input = tmp_aspect, output = "aspect")
   
-  # Prepare day/hour vectors
-  doy  <- as.integer(format(all_times, "%j"))
-  hour <- as.numeric(format(all_times,"%H")) + 
-    as.numeric(format(all_times,"%M"))/60
+  # Pre-compute Horizon
+  #rgrass::execGRASS("r.horizon", elevation = "dsm", output = "horizon", step = 1)
   
-  # ---- DAILY ACCUMULATION ----
-  current_day <- NULL
-  daily_accum <- NULL
+  # -------------------------
+  # 7. Run r.sun hourly to compute beam/diffuse/global on horizontal surface
+  # -------------------------
+  # r.sun expects day-of-year and time (decimal hours). We'll loop hourly.
+  # Note: r.sun can compute beam/diffuse/reflected using horizon raster.
+  # For speed, run only daylight hours per day; here we run full 0-23 for simplicity.
   
-  for(i in seq_along(all_times)){
+  # Return to 2m resolution
+  #rgrass::execGRASS("g.region", raster = "dsm", flags = "p") # back to fine region
+  
+  # Create a vector of day-of-year and hour
+  doy <- as.integer(format(times, "%j"))
+  hour_decimal <- as.numeric(format(times, "%H")) + as.numeric(format(times, "%M"))/60
+  
+  # We'll store hourly global horizontal irradiance (GHI) raster outputs in a temp mapset
+  # For large runs, parallelize by day or tile and write to disk incrementally.
+  for (i in seq_along(times)) {
     
-    t <- all_times[i]
-    day_i  <- doy[i]
-    hour_i <- hour[i]
+    t <- times[i]
+    day_i <- doy[i]
+    hour_i <- hour_decimal[i]
     
-    day_date <- as.Date(t)
-    
-    # If new day starts → write previous day summary
-    if (!is.null(current_day) && day_date != current_day) {
-      # write daily sum raster
-      daily_out <- file.path(out_dir, paste0(grid,"_",current_day,"_daily_total.tif"))
-      terra::writeRaster(daily_accum, daily_out,
-                         overwrite=TRUE, datatype="FLT4S",
-                         gdal="COMPRESS=LZW", NAflag=-9999)
-      daily_accum <- NULL
+    if(skip & file.exists(file.path(tempdir(), paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif")))){
+      message("Skipping ",paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif"))
+      next
     }
     
-    if (is.null(current_day)) current_day <- day_date
-    current_day <- day_date
-    
-    # run r.sun
     out_prefix <- paste0("sun_", format(t, "%Y%m%d%H"))
+    # r.sun parameters: day, time, horizon, beam_rad, diff_rad, glob_rad
     rgrass::execGRASS("r.sun",
-                      flags="overwrite",
-                      parameters=list(
-                        elevation="dsm",
-                        aspect="aspect",
-                        slope="slope",
-                        day=day_i,
-                        time=hour_i,
-                        nprocs=nprocs,
-                        glob_rad=paste0(out_prefix,"_glob")
+                      flags = c("overwrite"),
+                      parameters = list(elevation = "dsm",
+                                        aspect = "aspect",
+                                        slope = "slope",
+                                        #horizon_basename = "horizon", #Faster without using horizon
+                                        #horizon_step = 1,
+                                        day = day_i,
+                                        time = hour_i,
+                                        nprocs = nprocs, # Use multiple cores
+                                        #beam_rad = paste0(out_prefix, "_beam"),
+                                        #diff_rad = paste0(out_prefix, "_diff"),
+                                        glob_rad = paste0(out_prefix, "_glob")
                       ))
     
-    # export hourly raster
-    out_tif <- file.path(tempdir(), paste0(grid,"_ghi_",format(t,"%Y%m%d%H"),".tif"))
-    rgrass::execGRASS("r.out.gdal", flags="overwrite",
-                      input=paste0(out_prefix,"_glob"),
-                      output=out_tif, format="GTiff",
-                      type="Float32", nodata=-9999)
+    # Compute mean irradiance directly in GRASS to check if > 0 before exporting
+    univar_output <- rgrass::execGRASS("r.univar", map = paste0(out_prefix, "_glob"), intern = TRUE)
+    mean_line <- grep("^mean:", univar_output, value = TRUE)
+    mean_ghi <- as.numeric(sub("^mean:\\s*", "", mean_line))
     
-    ghi_r <- terra::rast(out_tif)
-    unlink(out_tif)
-    
-    # scale with ERA5 bias correction
-    era5_row <- era5[era5$timestamp == t,]
-    scale <- era5_row$era5_ghi_wm2 / mean(values(ghi_r), na.rm=TRUE)
-    cloud_factor <- pmax(0.1, 1 - era5_row$TCC)
-    ghi_corr <- ghi_r * scale * cloud_factor
-    
-    # ---- accumulate into daily raster ----
-    if (is.null(daily_accum)) {
-      daily_accum <- ghi_corr
-    } else {
-      daily_accum <- daily_accum + ghi_corr
+    if (!is.na(mean_ghi) && mean_ghi > 0) {
+      # Save to temp dir and read in terra
+      out_tif <- file.path(tempdir(), paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), ".tif"))
+      rgrass::execGRASS("r.out.gdal", flags = c("overwrite"), input = paste0(out_prefix, "_glob"),
+                        output = out_tif, format = "GTiff",
+                        type = "Float32",  nodata = -9999)
+      ghi_r <- terra::rast(out_tif)
+      era5_row <- era5[era5$timestamp == t, ]
+      if (nrow(era5_row) != 1) {
+        stop("Muliple or missing rows in ERA5 ", out_tif)
+      }
+      era5_ghi <- era5_row$era5_ghi_wm2
+      # optional: include cloud effect multiplier
+      #cloud_factor <- pmax(0.1, 1 - era5_row$TCC) # fallback
+      # bias-corrected raster
+      scale <- era5_ghi / mean_ghi
+      ghi_corr <- ghi_r * scale #* cloud_factor
+      out_tif_corr <- file.path(tempdir(), paste0(grid,"_ghi_", format(t, "%Y%m%d%H"), "_era5_adj.tif"))
+      terra::writeRaster(ghi_corr, filename=out_tif_corr, overwrite=TRUE, datatype="FLT4S", 
+                         gdal="COMPRESS=LZW", NAflag=-9999)
+      unlink(out_tif)
+      
     }
   }
   
-  # Write final day
-  if (!is.null(daily_accum)) {
-    last_out <- file.path(out_dir, paste0(grid,"_",current_day,"_daily_total.tif"))
-    terra::writeRaster(daily_accum, last_out,
+  # Sum Hourly into daily rasters
+  message("Summing hours into days")
+  sub_list = list.files(tempdir(),pattern = "_era5_adj.tif")
+  dates = unique(substr(sub_list, 10,17))
+  for(j in seq_along(dates)){
+    #message(dates[j])
+    day_list = sub_list[grepl(paste0("_",dates[j]),sub_list)]
+    if(length(day_list) == 0){
+      message("No rasters, skipping")
+      next
+    }
+    # Loop over hours
+    for(k in seq_along(day_list)){
+      #message(day_list[k])
+      rast_hourly = terra::rast(file.path(tempdir(),day_list[k]))
+      if (!exists("accum")) {
+        accum <- rast_hourly         # initialise
+      } else {
+        accum <- accum + rast_hourly # running sum
+      }
+    }
+    out_tif_corr = file.path(out_dir,paste0(grid,"_",dates[j],"_dailysum_era5_adj.tif"))
+    terra::writeRaster(accum,
+                       filename=out_tif_corr,
                        overwrite=TRUE, datatype="FLT4S",
                        gdal="COMPRESS=LZW", NAflag=-9999)
+    rm(accum, rast_hourly)
+    # Remove hourly rasters
+    unlink(file.path(tempdir(),day_list))
+    # End of Day Loop
   }
+  
   
   # Clean Up
   unlink(c(tmp_dsm, tmp_slope, tmp_aspect))
   unlink(file.path(tempdir(), "grassdb"), recursive = TRUE)
   
   return(invisible(NULL))
+  
 }
