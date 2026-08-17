@@ -57,7 +57,9 @@ read_progress <- function() {
 }
 
 done <- read_progress()
-todo <- setdiff(grids, done$grid[done$status == "ok"])
+# "empty" is as final as "ok" - an all-sea square has nothing to correct and
+# will be empty again next time. Only errors are worth retrying on a restart.
+todo <- setdiff(grids, done$grid[done$status %in% c("ok", "empty")])
 
 if ("--status" %in% commandArgs(trailingOnly = TRUE)) {
   cat("tiles total     :", length(grids), "\n")

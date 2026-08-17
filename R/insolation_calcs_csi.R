@@ -81,7 +81,8 @@ insolation_annual_csi <- function(
     clear_dir = "F:/DTM_DSM/GB_10k/solarClearSky",
     gisBase = "C:/Program Files/GRASS GIS 8.4",
     nprocs = 35,
-    flat_res = 500
+    flat_res = 500,
+    work_dir = "F:/DTM_DSM/GB_10k/_grass_tmp"
 ) {
 
   stopifnot(dir.exists(out_dir))
@@ -102,14 +103,25 @@ insolation_annual_csi <- function(
   mean_elev <- terra::global(dsm, "mean", na.rm = TRUE)[1, 1]
   if (!is.finite(mean_elev)) mean_elev <- 0
 
-  rgrass::initGRASS(gisBase = gisBase, home = tempdir(),
-                    gisDbase = file.path(tempdir(), "grassdb"),
+  # A fixed location, cleared first, on the data drive. Without `location`,
+  # initGRASS invents a new randomly-named one per call and never removes it -
+  # about 350 MB a tile, which filled the system drive and killed a long run.
+  dir.create(work_dir, showWarnings = FALSE, recursive = TRUE)
+  gisdb <- file.path(work_dir, "grassdb")
+  unlink(gisdb, recursive = TRUE, force = TRUE)
+  dir.create(gisdb, showWarnings = FALSE, recursive = TRUE)
+  scratch <- file.path(work_dir, "scratch")
+  dir.create(scratch, showWarnings = FALSE, recursive = TRUE)
+  on.exit(unlink(list.files(scratch, full.names = TRUE), force = TRUE), add = TRUE)
+
+  rgrass::initGRASS(gisBase = gisBase, home = work_dir,
+                    gisDbase = gisdb, location = "gbsolar",
                     mapset = "PERMANENT", override = TRUE)
   rgrass::execGRASS("g.proj", flags = "c", epsg = 27700)
 
-  tmp_dsm    <- file.path(tempdir(), "dsm.tif")
-  tmp_slope  <- file.path(tempdir(), "slope.tif")
-  tmp_aspect <- file.path(tempdir(), "aspect.tif")
+  tmp_dsm    <- file.path(scratch, "dsm.tif")
+  tmp_slope  <- file.path(scratch, "slope.tif")
+  tmp_aspect <- file.path(scratch, "aspect.tif")
   terra::writeRaster(dsm,      tmp_dsm,    overwrite = TRUE)
   terra::writeRaster(slope_r,  tmp_slope,  overwrite = TRUE)
   terra::writeRaster(aspect_r, tmp_aspect, overwrite = TRUE)
@@ -155,7 +167,7 @@ insolation_annual_csi <- function(
     rgrass::execGRASS("r.sun", flags = "overwrite", parameters = list(
       elevation = "flat_elev", slope = "flat_slope", aspect = "flat_aspect",
       day = doy[i], step = 1, nprocs = nprocs, glob_rad = out_map))
-    tif <- file.path(tempdir(), paste0(out_map, ".tif"))
+    tif <- file.path(scratch, paste0(out_map, ".tif"))
     rgrass::execGRASS("r.out.gdal", flags = "overwrite", parameters = list(
       input = out_map, output = tif, format = "GTiff", type = "Float32",
       nodata = -9999))
@@ -173,7 +185,7 @@ insolation_annual_csi <- function(
     rgrass::execGRASS("r.sun", flags = "overwrite", parameters = list(
       elevation = "dsm", slope = "slope", aspect = "aspect",
       day = doy[i], step = 1, nprocs = nprocs, glob_rad = out_map))
-    tif <- file.path(tempdir(), paste0(out_map, ".tif"))
+    tif <- file.path(scratch, paste0(out_map, ".tif"))
     rgrass::execGRASS("r.out.gdal", flags = "overwrite", parameters = list(
       input = out_map, output = tif, format = "GTiff", type = "Float32",
       nodata = -9999))

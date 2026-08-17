@@ -72,7 +72,8 @@ terrain_factor <- function(grid,
                            dsm_dir = "F:/DTM_DSM/GB_10k/DSM",
                            gisBase = "C:/Program Files/GRASS GIS 8.4",
                            nprocs = 35,
-                           flat_res = 500) {
+                           flat_res = 500,
+                           work_dir = "F:/DTM_DSM/GB_10k/_grass_tmp") {
 
   f_dsm <- file.path(dsm_dir, paste0(grid, ".tiff"))
   stopifnot(file.exists(f_dsm))
@@ -88,13 +89,33 @@ terrain_factor <- function(grid,
   mean_elev <- terra::global(dsm, "mean", na.rm = TRUE)[1, 1]
   if (!is.finite(mean_elev)) mean_elev <- 0
 
-  rgrass::initGRASS(gisBase = gisBase, home = tempdir(),
-                    gisDbase = file.path(tempdir(), "grassdb"),
+  # GRASS scratch lives here, not in tempdir(), for two reasons.
+  #
+  # Called without `location`, initGRASS invents a new randomly-named location
+  # on every call and nothing ever removes it. Each one holds this tile's
+  # imported 2 m DSM, slope and aspect - about 350 MB. Over a run of thousands
+  # of tiles in one R session that is hundreds of gigabytes: it filled the
+  # system drive after 1,034 tiles and killed the run. A fixed location name
+  # means each tile overwrites the last, and the directory is cleared first so
+  # nothing can survive between tiles either.
+  #
+  # It also sits on the data drive rather than C:. GRASS scratch is the same
+  # order of size as the rasters being processed, so it belongs where they are.
+  dir.create(work_dir, showWarnings = FALSE, recursive = TRUE)
+  gisdb <- file.path(work_dir, "grassdb")
+  unlink(gisdb, recursive = TRUE, force = TRUE)
+  dir.create(gisdb, showWarnings = FALSE, recursive = TRUE)
+  scratch <- file.path(work_dir, "scratch")
+  dir.create(scratch, showWarnings = FALSE, recursive = TRUE)
+  on.exit(unlink(list.files(scratch, full.names = TRUE), force = TRUE), add = TRUE)
+
+  rgrass::initGRASS(gisBase = gisBase, home = work_dir,
+                    gisDbase = gisdb, location = "gbsolar",
                     mapset = "PERMANENT", override = TRUE)
   rgrass::execGRASS("g.proj", flags = "c", epsg = 27700)
 
   wr <- function(r, nm) {
-    p <- file.path(tempdir(), paste0(nm, ".tif"))
+    p <- file.path(scratch, paste0(nm, ".tif"))
     terra::writeRaster(r, p, overwrite = TRUE)
     rgrass::execGRASS("r.in.gdal", flags = c("o", "overwrite"), input = p, output = nm)
   }
@@ -121,11 +142,12 @@ terrain_factor <- function(grid,
       rgrass::execGRASS("r.sun", flags = "overwrite", parameters = list(
         elevation = elev, slope = slope, aspect = aspect,
         day = doy[i], step = 1, nprocs = nprocs, glob_rad = m))
-      tif <- file.path(tempdir(), paste0(m, ".tif"))
+      tif <- file.path(scratch, paste0(m, ".tif"))
       rgrass::execGRASS("r.out.gdal", flags = "overwrite", parameters = list(
         input = m, output = tif, format = "GTiff", type = "Float32",
         nodata = -9999))
       v[i] <- terra::global(terra::rast(tif), "mean", na.rm = TRUE)[1, 1]
+      unlink(tif, force = TRUE)
     }
     sum(v * dim_)
   }
