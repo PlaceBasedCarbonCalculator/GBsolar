@@ -231,6 +231,11 @@ noisy that is roughly a 10x difference in the size of the deliverable.
   `tippecanoe` is vector-only and irrelevant here. **`pmtiles` was missing**; I
   installed it user-level with `pip3 install --user pmtiles` (v3.7.0), giving
   `~/.local/bin/pmtiles-convert`.
+- **`Ubuntu-22.04` is not the default WSL distro** - `Ubuntu-18.04` is, and it
+  has `mb-util` and `pmtiles-convert` but neither `mogrify` nor `sqlite3`. A
+  plain `wsl -- bash ...` therefore runs a long way before failing on the WebP
+  conversion. Always pass `-d Ubuntu-22.04`, and confirm with
+  `wsl --list --verbose`.
 - Passing shell one-liners from PowerShell into `wsl -- bash -lc "..."` mangles
   quoting. Write a `.sh` file, `sed -i s/\r$//` it, then `wsl -- bash file`.
 
