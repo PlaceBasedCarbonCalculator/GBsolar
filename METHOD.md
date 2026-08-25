@@ -4,7 +4,7 @@ Method, colour definition and outcomes for turning
 `F:\DTM_DSM\GB_10k\solarAnnualCSI` (2,251 OS-grid 10 km GeoTIFFs of annual
 insolation, 170 GB) into a single PMTiles raster layer for carbon.place.
 
-Written 2026-08-09, rebuilt 2026-08-25. Scripts referenced live in `scripts/`
+Written 2026-08-09, rebuilt 2026-08-26. Scripts referenced live in `scripts/`
 and `RScripts/`.
 
 > **The source changed on 2026-08-25.** The first build read `solarAnnual`,
@@ -243,7 +243,7 @@ noisy that is roughly a 10x difference in the size of the deliverable.
 
 ## 5. Results
 
-### The 2026-08-25 rebuild (current)
+### The 2026-08-25/26 rebuild (current)
 
 Built from `solarAnnualCSI` with the 100-1500 ramp, into
 `F:\DTM_DSM\large_rasters\SolarCSI\`. The old `Solar` directory is left
@@ -254,13 +254,42 @@ The warped mosaic is **206,492 x 421,532** in EPSG:3857, identical to the first
 build, so the tile pyramid geometry and counts below are unchanged - only the
 pixel values and their colours differ.
 
+Completed 2026-08-26. Final deliverable:
+**`F:\DTM_DSM\large_rasters\SolarCSI\GBsolar.pmtiles`, 6.98 GiB.**
+
 | stage | time | output |
 |---|---:|---|
 | VRT chain (mosaic + warp + colour) | seconds | 1.12 MB |
-| `gdal2tiles` z5-14 | _running_ | _pending_ |
-| PNG -> WebP q85, 14 workers | _pending_ | _pending_ |
-| `disk_to_mbtiles` | _pending_ | _pending_ |
-| `mbtiles_to_pmtiles` | _pending_ | _pending_ |
+| `gdal2tiles` z5-14 | 10h 08m | 444,879 PNG, 51.43 GB |
+| PNG -> WebP q85 (14 workers) + `disk_to_mbtiles` | 4h 55m | 7.3 GB WebP, 7.28 GiB MBTiles |
+| `mbtiles_to_pmtiles` | 27m | **6.98 GiB** |
+
+Total 08:30 on 2026-08-25 to 00:06 on 2026-08-26, 15h 36m.
+
+Tile counts per zoom are identical to the first build - same mosaic geometry, so
+the same pyramid - and PMTiles deduplication again collapses 444,879 addressed
+tiles to **122,669 entries over 117,400 distinct blobs**, because most of the
+bounding box is sea and every such tile is byte-identical.
+
+Verified by reading the archive back with
+[`scripts/04_verify_pmtiles.py`](scripts/04_verify_pmtiles.py): `TileType.WEBP`,
+zoom 5-14, bounds `-6.8637,49.9291,1.9979,60.2151`, all nine metadata keys
+present, and valid WebP returned for London, Bristol, Edinburgh, Cardiff,
+Inverness and Norwich at both z10 and z14. Sample tiles rendered from the
+archive are in `SolarCSI/samples/`: the z14 London tile resolves the Thames,
+individual roof pitches and the ribs of a station train shed, and reads
+distinctly warmer than the z14 Edinburgh tile - which is the between-tile
+variation the old normalisation was erasing, now visible on the map.
+
+### The contrast cost about 1.2 GB
+
+The deliverable grew from 5.81 to 6.98 GiB, and the PNG pyramid from 49.12 to
+51.43 GB, even though the geometry is unchanged. That is the 100-1500 domain
+being paid for: spreading the data over more of Turbo makes neighbouring pixels
+differ more in colour, so the imagery carries more high-frequency detail and
+lossy WebP compresses it less well (7.0x rather than 8.2x). Worth knowing before
+tightening the domain any further - contrast and archive size trade against each
+other directly here.
 
 ### The 2026-08-09 build (superseded)
 
