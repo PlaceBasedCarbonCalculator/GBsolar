@@ -10,10 +10,13 @@
 # looked at, never decoded - so lossy WebP is safe, and on imagery this noisy it
 # is the difference between a ~30 GB and a ~3 GB deliverable. Pass "lossless" to
 # reproduce GBDEM's setting.
+#
+# WORK is SolarCSI, the clear-sky-index-corrected rebuild. The old `Solar`
+# directory holds the superseded pyramid and is left alone.
 
 set -euo pipefail
 MODE="${1:-lossy}"
-WORK=/mnt/f/DTM_DSM/large_rasters/Solar
+WORK=/mnt/f/DTM_DSM/large_rasters/SolarCSI
 TILES="$WORK/tiles_png"
 export PATH="$PATH:$HOME/.local/bin"
 

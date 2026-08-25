@@ -138,12 +138,21 @@ insolation_annual_strategy <- function(
   # -------------------------
   # Final annual solar energy
   # -------------------------
-  # kWh/m2/year - I think (Leeds is ~100 to 1700 kWh, mean is 1000 kWh)
-  # Solar Atlas Gives 983 kWh/m2 for Leeds
+  # The /1000 converts Wh to kWh: E_clear_annual is in Wh/m2/year, so
+  # E_final_annual is in kWh/m2/year. Note the output FILENAME still says Whm2
+  # and is therefore wrong - see README.md, "A note on units and filenames".
+  #
+  # SUPERSEDED. `scale_factor` here is the per-tile-mean normalisation that
+  # R/apply_csi_correction.R exists to undo; this routine's output is the
+  # `solarAnnual` set, whose GB-wide mean was 1074 kWh/m2/year. The corrected
+  # `solarAnnualCSI` set means 965. Use R/insolation_calcs_csi.R for new work.
+  # The Global Solar Atlas figure of 983 kWh/m2/year for Leeds is flat-ground
+  # GHI and so compares with the de-terrained tile value (1003 for SE33 in the
+  # corrected set), not with the tile mean over terrain, which is 839.
   E_final_annual <- E_clear_annual * scale_factor / 1000
   
   # -------------------------
-  # Write output (Wh/m²/year)
+  # Write output (kWh/m2/year; see the note above about the filename)
   # -------------------------
   out_file <- file.path(
     out_dir,

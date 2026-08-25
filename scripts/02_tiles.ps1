@@ -17,9 +17,34 @@
 #                  z5 shows the whole island.
 # -r average       for building the overview zooms.
 # -w none          no HTML viewer boilerplate.
+#
+# This takes roughly 8.5 hours and gdal2tiles cannot resume, so run it detached
+# and keep the log:
+#   $p = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList `
+#          '-File','scripts\02_tiles.ps1','-RedirectStandardOutput',"$work\tiling.log"
 
-$work = "F:\DTM_DSM\large_rasters\Solar"
+param(
+    [string]$work = "F:\DTM_DSM\large_rasters\SolarCSI"
+)
 
-cmd /c "call C:\OSGeo4W\bin\o4w_env.bat && python -m osgeo_utils.gdal2tiles " +
-       "--xyz --tilesize=512 -z 5-14 --processes=14 -r average --no-kml -w none " +
-       "$work\solar_rgba_3857.vrt $work\tiles_png"
+$vrt = "$work\solar_rgba_3857.vrt"
+$out = "$work\tiles_png"
+if (-not (Test-Path $vrt)) { throw "$vrt missing - run scripts/01_build_vrts.ps1 first" }
+
+# A part-written pyramid from an interrupted run would be silently merged into
+# this one, so refuse rather than guess. Delete it deliberately to restart.
+if (Test-Path $out) { throw "$out already exists - remove it before re-tiling" }
+
+# Built as one string and handed to cmd as a single argument. The previous
+# version relied on `cmd /c "..." + "..."`, which PowerShell parses in argument
+# mode: `+` is passed through as a literal argument rather than concatenating,
+# so the command cmd actually received was not the one written here.
+$cmd = 'call C:\OSGeo4W\bin\o4w_env.bat && ' +
+       'python -m osgeo_utils.gdal2tiles ' +
+       '--xyz --tilesize=512 -z 5-14 --processes=14 -r average --no-kml -w none ' +
+       "`"$vrt`" `"$out`""
+
+Write-Output "running: $cmd"
+$t0 = Get-Date
+cmd /c $cmd
+Write-Output ("gdal2tiles finished in {0:n2} hours" -f ((Get-Date) - $t0).TotalHours)

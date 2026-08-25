@@ -199,6 +199,8 @@ insolation_annual_csi <- function(
     warning(grid, ": clear-sky index ", round(csi, 3),
             " is outside the plausible range - check units")
 
+  # E_clear_annual is Wh/m2/year, so /1000 gives kWh/m2/year. The output
+  # filename below still says Whm2 and is wrong - see README.md.
   E_final_annual <- E_clear_annual * csi / 1000   # kWh/m2/year
 
   if (!is.null(clear_dir)) {
