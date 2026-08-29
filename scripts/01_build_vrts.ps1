@@ -20,11 +20,18 @@
 # previously published GBsolar.pmtiles survives until this rebuild is verified.
 #
 # Prereq: RScripts/make_turbo_ramp.R has written $ramp into $work.
+#
+# $maxZoom must match the -z upper bound passed to gdal2tiles in
+# scripts/02_tiles.ps1 - it sets the pixel size here, and a mismatch means the
+# tiler either rescales the base tiles again (soft, defeats the point of
+# matching resolutions) or, worse, silently uses a source coarser than the
+# zoom level implies.
 
 param(
-    [string]$src  = "F:\DTM_DSM\GB_10k\solarAnnualCSI",
-    [string]$work = "F:\DTM_DSM\large_rasters\SolarCSI",
-    [string]$ramp = "turbo_100_1500.txt"
+    [string]$src     = "F:\DTM_DSM\GB_10k\solarAnnualCSI",
+    [string]$work    = "F:\DTM_DSM\large_rasters\SolarCSI",
+    [string]$ramp    = "turbo_100_1500.txt",
+    [int]   $maxZoom = 15
 )
 
 $gdal = "C:\OSGeo4W\bin"
@@ -46,15 +53,19 @@ Get-ChildItem $src -Filter *.tif | Select-Object -ExpandProperty FullName |
 & "$gdal\gdalbuildvrt.exe" -input_file_list "$work\tif_list.txt" "$work\solar_27700.vrt"
 
 # --- 2. Reproject 27700 -> 3857 ----------------------------------------------
-# -tr is the exact z14 resolution for 512 px tiles:
-#     156543.03392804097 / 2^14 / 2 = 4.77731426716 projected m/px
+# -tr is the exact resolution of $maxZoom for 512 px tiles:
+#     156543.03392804097 / 2^maxZoom / 2 projected m/px
+# ($maxZoom=14 gives 4.77731426782; $maxZoom=15 gives 2.38865713391, used since
+# the 2026-08 rebuild - the 100-1500 ramp made full-zoom banding more visible,
+# and z14 was already matched to the 2 m source about as tightly as it can be,
+# so the fix is a finer base zoom rather than a different resampling method.)
 # Matching the tile grid resolution here means the tiler does no further
 # rescaling of the base tiles.
-# -r average because this is a downsample (2 m native -> ~4.78 projected m);
-# 'near' would alias badly on a surface this noisy.
+# -r average because this is still a downsample even at z15 (2 m native ->
+# ~2.39 projected m); 'near' would alias badly on a surface this noisy.
 # nodata is carried through as -9999 so the colour table's "nv" entry can make
 # it transparent rather than rendering sea as the bottom of the ramp.
-$res = 4.77731426716
+$res = 156543.03392804097 / [math]::Pow(2, $maxZoom) / 2
 & "$gdal\gdalwarp.exe" -of VRT -s_srs EPSG:27700 -t_srs EPSG:3857 -r average `
     -tr $res $res -srcnodata -9999 -dstnodata -9999 -multi `
     "$work\solar_27700.vrt" "$work\solar_3857.vrt"

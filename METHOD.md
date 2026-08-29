@@ -4,8 +4,8 @@ Method, colour definition and outcomes for turning
 `F:\DTM_DSM\GB_10k\solarAnnualCSI` (2,251 OS-grid 10 km GeoTIFFs of annual
 insolation, 170 GB) into a single PMTiles raster layer for carbon.place.
 
-Written 2026-08-09, rebuilt 2026-08-26. Scripts referenced live in `scripts/`
-and `RScripts/`.
+Written 2026-08-09, rebuilt 2026-08-26 and again from 2026-08-29. Scripts
+referenced live in `scripts/` and `RScripts/`.
 
 > **The source changed on 2026-08-25.** The first build read `solarAnnual`,
 > whose per-tile level was set by a normalisation later found to be wrong (see
@@ -13,8 +13,16 @@ and `RScripts/`.
 > are in `solarAnnualCSI` and differ from the originals by a per-tile scalar
 > spanning **0.62 to 1.05**. That is not a uniform shift, so the old pyramid
 > could not be adjusted after the fact and the map was re-tiled from scratch.
-> Everything below describes the corrected build; the superseded figures are
-> kept in section 5 for comparison rather than deleted.
+>
+> **The base zoom changed on 2026-08-29**, from 14 to 15. The 100-1500 ramp
+> (previous change) made full-zoom banding more noticeable, and the fix is a
+> finer base zoom rather than a different resampling method - see section 2.2.
+> This is a same-source, same-colours rebuild: only the tile pyramid's depth
+> changes, not what any pixel means.
+>
+> Everything below describes the current (z15) build; the superseded figures
+> from both earlier builds are kept in section 5 for comparison rather than
+> deleted.
 
 ---
 
@@ -90,11 +98,19 @@ rough — which, at 2 m over buildings, is everywhere.
 
 Warp settings:
 
-- `-tr 4.77731426716` — the exact z14 resolution for 512 px tiles
-  (`156543.03392804097 / 2^14 / 2`). Matching the tile grid means the tiler does
-  no further rescaling when cutting base tiles.
-- `-r average` — this is a downsample (2 m native to ~4.78 projected m/px at GB
-  latitudes). `near`, which GBDEM uses, aliases badly on a surface this noisy.
+- `-tr` is the exact resolution of the tiler's base zoom for 512 px tiles
+  (`156543.03392804097 / 2^maxZoom / 2`). Matching the tile grid means the
+  tiler does no further rescaling when cutting base tiles. Base zoom was 14
+  (4.77731426716 m/px) on the first two builds and is **15** (2.38865713391
+  m/px) from 2026-08-29, because the 100-1500 ramp made banding at full zoom
+  more visible than the 0-2000 one did, and z14 was already matched to the 2 m
+  source about as tightly as it can be - the fix is a finer base zoom, not a
+  different resampling method. `$maxZoom` is a parameter in
+  `scripts/01_build_vrts.ps1` and must be kept in sync with the same parameter
+  in `scripts/02_tiles.ps1`.
+- `-r average` — this is a downsample even at z15 (2 m native to ~2.39
+  projected m/px at GB latitudes). `near`, which GBDEM uses, aliases badly on a
+  surface this noisy.
 - `-srcnodata -9999 -dstnodata -9999` — carried through so the colour table can
   make it transparent.
 
@@ -194,7 +210,7 @@ the Turbo colours as terrain heights.
     "url": "pmtiles://https://www.carbon.place/GBsolar.pmtiles",
     "tileSize": 512,
     "minzoom": 5,
-    "maxzoom": 14
+    "maxzoom": 15
   }
 }
 ```
@@ -206,7 +222,7 @@ the Turbo colours as terrain heights.
 | stage | tool | output |
 |---|---|---|
 | 1. mosaic + reproject + colour | `gdalbuildvrt`, `gdalwarp`, `gdaldem` | 1.1 MB of VRT |
-| 2. XYZ tiles | `gdal2tiles --xyz --tilesize=512 -z 5-14` | PNG pyramid |
+| 2. XYZ tiles | `gdal2tiles --xyz --tilesize=512 -z 5-15` | PNG pyramid |
 | 3. WebP | ImageMagick `mogrify` in WSL | WebP pyramid |
 | 4. MBTiles | `mb-util --image_format=webp --scheme=xyz` | `.mbtiles` |
 | 5. PMTiles | `pmtiles-convert` | `.pmtiles` |
@@ -243,7 +259,33 @@ noisy that is roughly a 10x difference in the size of the deliverable.
 
 ## 5. Results
 
-### The 2026-08-25/26 rebuild (current)
+### The 2026-08-29 rebuild, base zoom 15 (current)
+
+Same source (`solarAnnualCSI`), same 100-1500 ramp, same `SolarCSI` work
+directory - the only change from the previous build is `$maxZoom` in
+`scripts/01_build_vrts.ps1` and `scripts/02_tiles.ps1`, 14 -> 15, made because
+the higher-contrast ramp showed visible blur/banding at full zoom, and z14 was
+already matched to the 2 m source about as tightly as a base zoom can be (see
+section 2.2). Everything upstream of the VRT chain - the raster values, the
+correction, the colour table - is untouched.
+
+The warped mosaic is **412,983 x 843,063** in EPSG:3857 (double the z14
+build's linear dimensions, off by one pixel each way from GDAL's extent
+rounding), so the z15 base tile grid is
+**807 x 1,647 = 1,329,129** tiles, essentially 4x the z14 base's 332,896 (ratio
+3.99, the shortfall from exactly 4x being rounding at the tile-grid edges) -
+gdal2tiles' cost is dominated by the base zoom, which is resampled directly
+from the source VRT, so this build cost roughly 4x the z5-14 one rather than a
+proportionate "one more level" amount.
+
+| stage | time | output |
+|---|---:|---|
+| VRT chain (mosaic + warp + colour) | seconds | 1.12 MB |
+| `gdal2tiles` z5-15 | _running_ | _pending_ |
+| PNG -> WebP q85 (14 workers) + `disk_to_mbtiles` | _pending_ | _pending_ |
+| `mbtiles_to_pmtiles` | _pending_ | _pending_ |
+
+### The 2026-08-25/26 rebuild, base zoom 14 (superseded 2026-08-29)
 
 Built from `solarAnnualCSI` with the 100-1500 ramp, into
 `F:\DTM_DSM\large_rasters\SolarCSI\`. The old `Solar` directory is left

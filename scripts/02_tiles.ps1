@@ -12,19 +12,26 @@
 # --xyz            OSM/slippy numbering, which is what MapLibre expects.
 #                  Without it you get TMS and the map is upside down.
 # --tilesize=512   matches GBDEM's output and halves the tile count.
-# -z 5-14          z14 at 512 px is 4.78 projected m/px, just coarser than the
-#                  2 m source at GB latitudes, so z14 is the natural floor.
-#                  z5 shows the whole island.
+# -z 5-$maxZoom    must match the resolution baked into the VRT chain by
+#                  scripts/01_build_vrts.ps1's $maxZoom - see the note there.
+#                  z5 shows the whole island at the low end regardless.
 # -r average       for building the overview zooms.
 # -w none          no HTML viewer boilerplate.
 #
-# This takes roughly 8.5 hours and gdal2tiles cannot resume, so run it detached
-# and keep the log:
+# gdal2tiles' base zoom is where nearly all the time goes - it is the one level
+# resampled directly from the source VRT, and every coarser zoom is then built
+# cheaply by 2x2-downsampling the level below. Going from a z14 to a z15 base
+# roughly quadruples the base tile count (404x824 -> ~808x1648), so this step
+# roughly quadruples too: the z5-14 pyramid took 10h08m on 2026-08-25/26,
+# so budget on the order of a day and a half for z5-15, not "a bit longer".
+#
+# gdal2tiles cannot resume, so run it detached and keep the log:
 #   $p = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList `
 #          '-File','scripts\02_tiles.ps1','-RedirectStandardOutput',"$work\tiling.log"
 
 param(
-    [string]$work = "F:\DTM_DSM\large_rasters\SolarCSI"
+    [string]$work    = "F:\DTM_DSM\large_rasters\SolarCSI",
+    [int]   $maxZoom = 15
 )
 
 $vrt = "$work\solar_rgba_3857.vrt"
@@ -41,7 +48,7 @@ if (Test-Path $out) { throw "$out already exists - remove it before re-tiling" }
 # so the command cmd actually received was not the one written here.
 $cmd = 'call C:\OSGeo4W\bin\o4w_env.bat && ' +
        'python -m osgeo_utils.gdal2tiles ' +
-       '--xyz --tilesize=512 -z 5-14 --processes=14 -r average --no-kml -w none ' +
+       "--xyz --tilesize=512 -z 5-$maxZoom --processes=14 -r average --no-kml -w none " +
        "`"$vrt`" `"$out`""
 
 Write-Output "running: $cmd"

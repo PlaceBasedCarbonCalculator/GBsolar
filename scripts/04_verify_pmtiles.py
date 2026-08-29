@@ -25,6 +25,9 @@ from pmtiles.reader import MmapSource, Reader
 PATH = sys.argv[1] if len(sys.argv) > 1 else \
     "/mnt/f/DTM_DSM/large_rasters/SolarCSI/GBsolar.pmtiles"
 
+# Must match $maxZoom in scripts/01_build_vrts.ps1 and scripts/02_tiles.ps1.
+MAXZOOM = 15
+
 CITIES = {
     "London":    (51.5074, -0.1278),
     "Bristol":   (51.4545, -2.5879),
@@ -58,8 +61,8 @@ def main():
 
         zmin, zmax = hdr["min_zoom"], hdr["max_zoom"]
         print(f"zooms   : {zmin}-{zmax}")
-        if (zmin, zmax) != (5, 14):
-            failures.append(f"zoom range {zmin}-{zmax}, expected 5-14")
+        if (zmin, zmax) != (5, MAXZOOM):
+            failures.append(f"zoom range {zmin}-{zmax}, expected 5-{MAXZOOM}")
 
         bounds = (hdr["min_lon_e7"] / 1e7, hdr["min_lat_e7"] / 1e7,
                   hdr["max_lon_e7"] / 1e7, hdr["max_lat_e7"] / 1e7)
@@ -81,7 +84,7 @@ def main():
             failures.append(f"metadata missing keys: {sorted(missing)}")
 
         print("\nsampling real tiles:")
-        for z in (10, 14):
+        for z in (10, MAXZOOM):
             for name, (lat, lon) in CITIES.items():
                 x, y = lonlat_to_tile(lat, lon, z)
                 data = reader.get(z, x, y)

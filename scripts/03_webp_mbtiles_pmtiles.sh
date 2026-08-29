@@ -52,6 +52,7 @@ echo "=== MBTiles ==="
 # happened on the first build. Writing it here costs nothing and removes the
 # failure. Bounds are the WGS84 extent of solar_rgba_3857.vrt, from
 # `gdalinfo -json`; regenerate them if the source tile set ever changes.
+# maxzoom must match $maxZoom in scripts/01_build_vrts.ps1 and 02_tiles.ps1.
 cat > "$TILES/metadata.json" <<'JSON'
 {
   "name": "GBsolar",
@@ -62,7 +63,7 @@ cat > "$TILES/metadata.json" <<'JSON'
   "bounds": "-6.8637,49.9291,1.9979,60.2151",
   "center": "-2.4329,55.0721,10",
   "minzoom": "5",
-  "maxzoom": "14"
+  "maxzoom": "15"
 }
 JSON
 
