@@ -47,3 +47,11 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Large working data. None of this belongs in the repository: the tile outputs
+# below run to gigabytes and the rasters they come from live on F: anyway.
+# outputs_tile/ is per-hour debugging output from the integrated pipeline (15 GB)
+# and sampleData/ERA5/summary_data_all.Rds is the full reanalysis extract (268 MB);
+# the small per-grid summaries beside it are the ones worth keeping.
+outputs_tile/
+sampleData/ERA5/summary_data_all.Rds
