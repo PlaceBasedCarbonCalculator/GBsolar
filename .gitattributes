@@ -1,0 +1,7 @@
+# Shell scripts run inside WSL bash, which chokes on CRLF (the very trap that
+# hit scripts/03_webp_mbtiles_pmtiles.sh here: core.autocrlf on this Windows
+# checkout silently reintroduced CRLF after an edit, and bash then read the
+# trailing \r as part of the last token on each line - "set -euo pipefail\r"
+# failed with "pipefail: invalid option name" before the script did anything).
+# Force LF regardless of the checking-out machine's autocrlf setting.
+*.sh text eol=lf
